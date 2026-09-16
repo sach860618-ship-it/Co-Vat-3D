@@ -36,17 +36,16 @@ export class FbxLoadingStep {
                 this.url,
 
                 (fbx) => {
-                    progressEl.textContent = 'Tải xong';
+                    console.log('Tải xong');
                 },
 
                 (xhr) => {
                     const loadedKB = (xhr.loaded / 1024).toFixed(1);
                     const totalKB = (xhr.total / 1024).toFixed(1);
 
-                    progressEl.textContent =
-                    `${loadedKB} KB / ${totalKB} KB`;
+                    console.log(`${loadedKB} KB / ${totalKB} KB`);
                 }
-                );
+            );
             this.loader.load(
                 this.url,
                 (fbx: Group) => {
