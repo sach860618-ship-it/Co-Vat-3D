@@ -9,10 +9,21 @@ export class FbxLoadingStep {
     public url: string;
     public loader: FBXLoader;
     public byteProgress = new RangeProgress(0, 0);
-    public estimatedSize: number = 0;
+    private _estimatedSize: number = 0;
 
     constructor() {
         this.init();
+    }
+
+    public get estimatedSize(): number {
+        return this._estimatedSize;
+    }
+
+    public set estimatedSize(size: number) {
+        this._estimatedSize = size;
+        if (size > 0 && this.byteProgress.max === 0) {
+            this.byteProgress.max = size;
+        }
     }
 
     public get loadedBytes(): number {
@@ -20,32 +31,22 @@ export class FbxLoadingStep {
     }
 
     public get totalBytes(): number {
-        return this.byteProgress.max;
+        return this.byteProgress.max > 0 ? this.byteProgress.max : this.estimatedSize;
     }
 
     public getFormattedBytes(unit: "B" | "KB" | "MB" = "MB"): string {
         const divisor = unit === "MB" ? 1024 * 1024 : unit === "KB" ? 1024 : 1;
         const currentFormatted = (this.byteProgress.current / divisor).toFixed(2);
-        const totalFormatted = (this.byteProgress.max / divisor).toFixed(2);
-        return `${currentFormatted} / ${totalFormatted} ${unit}`;
+        const total = this.totalBytes;
+        if (total > 0) {
+            const totalFormatted = (total / divisor).toFixed(2);
+            return `${currentFormatted} / ${totalFormatted} ${unit}`;
+        }
+        return `${currentFormatted} ${unit}`;
     }
 
     public execute = async (): Promise<LoadingStepResult<Group>> => {
         return new Promise<LoadingStepResult<Group>>((resolve) => {
-            this.loader.load(
-                this.url,
-
-                (fbx) => {
-                    console.log('Tải xong');
-                },
-
-                (xhr) => {
-                    const loadedKB = (xhr.loaded / 1024).toFixed(1);
-                    const totalKB = (xhr.total / 1024).toFixed(1);
-
-                    console.log(`${loadedKB} KB / ${totalKB} KB`);
-                }
-            );
             this.loader.load(
                 this.url,
                 (fbx: Group) => {
@@ -56,14 +57,16 @@ export class FbxLoadingStep {
                     resolve(result);
                 },
                 (event: ProgressEvent) => {
-                    if (event.lengthComputable && event.total > 0) {
-                        this.byteProgress.update(event.loaded, event.total);
-                        this.step.progress.update(this.byteProgress.normalized);
-                    } else if (event.loaded > 0) {
-                        const total = this.estimatedSize > 0 ? this.estimatedSize : event.loaded;
-                        this.byteProgress.update(event.loaded, total);
-                        this.step.progress.update(this.byteProgress.normalized);
-                    }
+                    const total = (event.lengthComputable && event.total > 0)
+                        ? event.total
+                        : (this.estimatedSize > 0 ? this.estimatedSize : event.loaded);
+
+                    this.byteProgress.update(event.loaded, total);
+                    this.step.progress.update(this.byteProgress.normalized);
+
+                    const loadedKB = (event.loaded / 1024).toFixed(1);
+                    const totalKB = (total / 1024).toFixed(1);
+                    console.log(`[FBX Load] ${loadedKB} KB / ${totalKB} KB`);
                 },
                 (error) => {
                     console.error(`[FbxLoadingStep] Lỗi tải FBX: ${this.url}`, error);

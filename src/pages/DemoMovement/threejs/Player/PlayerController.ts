@@ -7,8 +7,8 @@ import { CannonBodyAttachObject3D } from "../../../../utils/three/CANNON/CannonB
 import { PlayerStateMachine } from "./StateMachine/PlayerStateMachine";
 
 
-const playerFbxUrl = new URL('/src/pages/DemoMovement/src/fbx/Player.fbx', import.meta.url).href;
-const atlasTextureUrl = new URL('/src/pages/DemoMovement/src/fbx/AtlasTexture.png', import.meta.url).href;
+const playerFbxUrl = new URL('../../src/fbx/Player.fbx', import.meta.url).href;
+const atlasTextureUrl = new URL('../../src/fbx/AtlasTexture.png', import.meta.url).href;
 
 
 
@@ -213,10 +213,9 @@ export class PlayerController {
                     playerFbxUrl,
                     (fbx) => resolve(fbx),
                     (progress) => {
-                        if (progress.total > 0) {
-                            const ratio = progress.loaded / progress.total;
-                            onProgress?.(ratio);
-                        }
+                        const total = (progress.lengthComputable && progress.total > 0) ? progress.total : 3375184;
+                        const ratio = Math.min(progress.loaded / total, 1);
+                        onProgress?.(ratio);
                     },
                     (error) => reject(error)
                 );
