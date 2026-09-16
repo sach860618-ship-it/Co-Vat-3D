@@ -6,7 +6,7 @@ export class LoadingProgress {
     public getFBXLoader: () => FBXLoader;
 
     public createPlayerLoader(): FbxLoadingStep {
-        const playerFbxUrl = new URL('../src/fbx/Player.fbx', import.meta.url).href;
+        const playerFbxUrl = new URL('../src/fbx/Aj.fbx', import.meta.url).href;
         const playerLoadProgress = new FbxLoadingStep();
         playerLoadProgress.url = playerFbxUrl;
         playerLoadProgress.estimatedSize = 3375184; // ~3.3MB
