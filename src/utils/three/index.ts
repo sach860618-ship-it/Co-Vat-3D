@@ -182,49 +182,7 @@ function disposeMaterial(mat: THREE.Material): void {
         }
     }
 }
-export function loadModel(
-    loader: GLTFLoader,
-    modelUrl: string,
-    position: THREE.Vector3,
-    scale: THREE.Vector3,
-    rotation: THREE.Vector3,
-    scene: THREE.Scene
-): Promise<GLTF> {
-    return new Promise<GLTF>((resolve, reject) => {
-        loader.load(
-            encodeURI(modelUrl),
-
-            (gltf: GLTF) => {
-                const model: THREE.Object3D = gltf.scene;
-
-                model.position.copy(position);
-                model.scale.copy(scale);
-
-                model.rotation.set(
-                    rotation.x,
-                    rotation.y,
-                    rotation.z
-                );
-
-                scene.add(model);
-
-                resolve(gltf);
-            },
-
-            undefined,
-
-            (error: unknown) => {
-                console.warn(
-                    'Lỗi khi nạp mô hình 3D:',
-                    error
-                );
-
-                reject(error);
-            }
-        );
-    });
-}
 
 export * from './SmoothFollowerBehaviour';
 export * from './ThirdPersonOrbitBehaviour';
-export * from './FpsTracker';
+export * from './Utils/LoadModelUtils';

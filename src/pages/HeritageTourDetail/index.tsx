@@ -19,16 +19,22 @@ import {
     handleWindowResize,
     disposeHierarchy,
     loadModel,
+    loadModelAsync,
     getNormalizedPointer,
     ThirdPersonOrbitBehaviour,
     FpsTracker,
 } from '../../utils/three';
+import { ArtifactLoadingBadge, BackgroundAssetStatus } from './Artifact/ArtifactLoadingBadge';
 import { ExtendThreeCamera } from '../../utils/three/ExtendThreeCamera';
 import { ThreeEnvironment } from '../../utils/three/ThreeEnvironment';
 import { ExtendThreeScene } from '../../utils/three/ExtendThreeScene';
 import { ExtendThreeRenderer } from '../../utils/three/ExtendThreeRenderer';
 import { ThreeBehaviours } from '../../utils/three/ThreeBehaviour';
 import { ArtifactRotateBehaviour } from './Artifact/ArtifactRotateBehaviour';
+import {
+    ArtifactLoadingPlaceholder,
+    PlaceholderRotateBehaviour,
+} from './Artifact/ArtifactLoadingPlaceholder';
 import { PlayerAnimationKey, PlayerLoader } from './Player/PlayerLoader';
 import { FBXLoader } from 'three/examples/jsm/Addons.js';
 import { ThreeAnimation } from '../../utils/three/ThreeAnimation';
@@ -93,6 +99,12 @@ const HeritageTourDetail: React.FC = () => {
     const [showInfo, setShowInfo] = useState<boolean>(true);                 // Bật/tắt bảng thông tin giới thiệu địa điểm
     const [showColliders, setShowColliders] = useState<boolean>(false);     // Bật/tắt hiển thị khung collider helper
     const [ballCount, setBallCount] = useState<number>(0);                   // Số lượng quả bóng vật lý trong scene
+    const [bgAssetStatus, setBgAssetStatus] = useState<BackgroundAssetStatus>({
+        total: destination?.artifacts?.length || 0,
+        loaded: 0,
+        currentName: '',
+        isComplete: false,
+    });
     const physicsManagerRef = useRef<CannonPhysicsManager | null>(null);
     const playerRef = useRef<THREE.Object3D | null>(null);
 
@@ -154,22 +166,23 @@ const HeritageTourDetail: React.FC = () => {
         mountRef.current.appendChild(threeEnviroment.renderer.domElement);
 
         startLoading('Khởi tạo không gian 3D...');
-        const loadingManager = new THREE.LoadingManager(
-            // onLoad -> hoàn tất
+        // LoadingManager chuyên trách cho tài nguyên bắt buộc (Environment, Player, Animations)
+        const mandatoryLoadingManager = new THREE.LoadingManager(
+            // onLoad -> hoàn tất tài nguyên bắt buộc, mở giao diện
             () => completeLoading('Sẵn sàng khám phá!'),
-            // onProgress -> cập nhật % và tên file
+            // onProgress -> cập nhật % và tên file bắt buộc
             (url, itemsLoaded, itemsTotal) => {
                 const pct = Math.round((itemsLoaded / itemsTotal) * 100);
                 const filename = url.split('/').pop() || '';
                 updateProgress(pct, `Đang nạp mô hình: ${filename}`);
             },
             // onError
-            (url) => console.warn(`Lỗi khi tải tài nguyên 3D: ${url}`)
+            (url) => console.warn(`Lỗi khi tải tài nguyên 3D bắt buộc: ${url}`)
         );
 
-        // Khởi tạo GLTFLoader chuyên dụng gắn kèm LoadingManager
-        const gltfLoader = new GLTFLoader(loadingManager);
-        const fbxLoader = new FBXLoader(loadingManager);
+        // Khởi tạo loader cho tài nguyên bắt buộc
+        const mandatoryGltfLoader = new GLTFLoader(mandatoryLoadingManager);
+        const mandatoryFbxLoader = new FBXLoader(mandatoryLoadingManager);
 
         // Lấy kích thước thực tế của vùng chứa canvas WebGL
         const container = mountRef.current;
@@ -189,7 +202,7 @@ const HeritageTourDetail: React.FC = () => {
         });
 
         // ---------------------------------------------------------------------
-        // 5. Nạp danh sách cổ vật 3D, hỗ trợ xoay tròn, hitbox tương tác và BVH Collider
+        // 5. Khởi tạo Collider, Physics và nạp ngầm danh sách cổ vật 3D
         // ---------------------------------------------------------------------
         const interactiveArtifacts: THREE.Object3D[] = [];
         const colliderManager = new ColliderManager(threeEnviroment.scene);
@@ -208,43 +221,108 @@ const HeritageTourDetail: React.FC = () => {
 
         const threeBehaviours = new ThreeBehaviours();
 
-        if (destination.artifacts != null) {
-            destination.artifacts.forEach((artifact) => {
-                loadModel(
-                    gltfLoader,
-                    artifact.modelUrl,
-                    artifact.position,
-                    artifact.scale,
-                    artifact.rotation,
-                    threeEnviroment.scene
-                ).then((gltf) => {
-                    const model = gltf.scene;
-                    model.userData = { artifact, artifactId: artifact.id };
-                    model.traverse((child) => {
-                        child.userData = { artifact, artifactId: artifact.id };
-                    });
-                    const rotateBehaviour = new ArtifactRotateBehaviour(new THREE.Vector3(0, 0.3, 0));
-                    threeBehaviours.Register(model, rotateBehaviour);
+        // Tải ngầm danh sách cổ vật trong nền (Non-blocking, kèm Placeholder Cube & Progress Bar)
+        const bgGltfLoader = new GLTFLoader();
+        const placeholders = new Map<string, ArtifactLoadingPlaceholder>();
 
-                    interactiveArtifacts.push(model);
-                    colliderManager.addDynamicObject(model);
-                }).catch((err) => {
-                    console.warn(`Lỗi khi nạp mô hình cổ vật ${artifact.name}:`, err);
-                });
+        if (destination.artifacts) {
+            destination.artifacts.forEach((artifact) => {
+                const placeholder = new ArtifactLoadingPlaceholder(
+                    threeEnviroment.scene,
+                    artifact.position,
+                    artifact.name,
+                    1.2
+                );
+                const rotateBehaviour = new PlaceholderRotateBehaviour(placeholder);
+                threeBehaviours.Register(placeholder.group, rotateBehaviour);
+                placeholders.set(artifact.id, placeholder);
             });
         }
 
+        const loadDeferredArtifacts = async () => {
+            if (!destination.artifacts || destination.artifacts.length === 0) {
+                setBgAssetStatus({ total: 0, loaded: 0, currentName: '', isComplete: true });
+                return;
+            }
+
+            const total = destination.artifacts.length;
+            let loadedCount = 0;
+
+            for (const artifact of destination.artifacts) {
+                setBgAssetStatus({
+                    total,
+                    loaded: loadedCount,
+                    currentName: artifact.name,
+                    isComplete: false,
+                });
+
+                const placeholder = placeholders.get(artifact.id);
+
+                try {
+                    const gltf = await loadModelAsync(bgGltfLoader, artifact.modelUrl, {
+                        position: artifact.position,
+                        scale: artifact.scale,
+                        rotation: artifact.rotation,
+                        scene: threeEnviroment.scene,
+                        onProgress: (e) => {
+                            if (e.total > 0 && placeholder) {
+                                const pct = (e.loaded / e.total) * 100;
+                                placeholder.updateProgress(pct);
+                            }
+                        },
+                        onBeforeAdd: (model) => {
+                            // Khi model thật chuẩn bị add vào scene, dọn dẹp placeholder
+                            if (placeholder) {
+                                threeBehaviours.Remove(placeholder.group);
+                                placeholder.dispose();
+                                placeholders.delete(artifact.id);
+                            }
+
+                            model.userData = { artifact, artifactId: artifact.id };
+                            model.traverse((child) => {
+                                child.userData = { artifact, artifactId: artifact.id };
+                            });
+                            const rotateBehaviour = new ArtifactRotateBehaviour(new THREE.Vector3(0, 0.3, 0));
+                            threeBehaviours.Register(model, rotateBehaviour);
+                        },
+                    });
+
+                    interactiveArtifacts.push(gltf.scene);
+                    colliderManager.addDynamicObject(gltf.scene);
+                } catch (err) {
+                    console.warn(`Lỗi khi nạp mô hình cổ vật ${artifact.name}:`, err);
+                    if (placeholder) {
+                        threeBehaviours.Remove(placeholder.group);
+                        placeholder.dispose();
+                        placeholders.delete(artifact.id);
+                    }
+                }
+
+                loadedCount++;
+                setBgAssetStatus({
+                    total,
+                    loaded: loadedCount,
+                    currentName: artifact.name,
+                    isComplete: loadedCount >= total,
+                });
+            }
+        };
+
+        loadDeferredArtifacts();
+
         // ---------------------------------------------------------------------
-        // 6. Nạp mô hình không gian phòng trưng bày 3D & Xây dựng BVH Collider tĩnh
+        // 6. Nạp mô hình không gian phòng trưng bày 3D & Xây dựng BVH Collider tĩnh (Bắt buộc)
         // ---------------------------------------------------------------------
         if (destination.environment != null) {
-            loadModel(
-                gltfLoader,
+            loadModelAsync(
+                mandatoryGltfLoader,
                 destination.environment.modelUrl,
-                destination.environment.position,
-                destination.environment.scale,
-                destination.environment.rotation,
-                threeEnviroment.scene
+                {
+                    position: destination.environment.position,
+                    scale: destination.environment.scale,
+                    rotation: destination.environment.rotation,
+                    scene: threeEnviroment.scene,
+                }
             ).then((envGltf) => {
                 colliderManager.setStaticEnvironment(envGltf.scene);
             }).catch((err) => {
@@ -256,13 +334,13 @@ const HeritageTourDetail: React.FC = () => {
         const threeAnimation = new ThreeAnimation();
         const playerLoader = new PlayerLoader();
 
-        playerLoader.loadPlayerModel(gltfLoader, threeEnviroment.scene)
+        playerLoader.loadPlayerModel(mandatoryGltfLoader, threeEnviroment.scene)
             .then(async (player) => {
                 threeAnimation.setRoot(player);
 
                 const [idleClip, walkClip] = await Promise.all([
-                    playerLoader.loadIdleAnimation(fbxLoader),
-                    playerLoader.loadWalkAnimation(fbxLoader)
+                    playerLoader.loadIdleAnimation(mandatoryFbxLoader),
+                    playerLoader.loadWalkAnimation(mandatoryFbxLoader)
                 ]);
 
                 if (idleClip) threeAnimation.add(PlayerAnimationKey.Idle, idleClip);
@@ -505,6 +583,12 @@ const HeritageTourDetail: React.FC = () => {
             playerRef.current = null;
             clearLights();
 
+            placeholders.forEach((placeholder) => {
+                threeBehaviours.Remove(placeholder.group);
+                placeholder.dispose();
+            });
+            placeholders.clear();
+
             cancelAnimationFrame(animationFrameId);
 
             if (container.contains(threeEnviroment.renderer.domElement)) {
@@ -538,6 +622,9 @@ const HeritageTourDetail: React.FC = () => {
                     loadingItemText={loadingItemText}
                 />
             )}
+
+            {/* Lớp 1.5: Badge trạng thái nạp ngầm cổ vật khi đang trong phòng */}
+            <ArtifactLoadingBadge status={bgAssetStatus} />
 
             {/* Lớp 2: Vùng chứa Canvas WebGL dựng hình Three.js */}
             <div

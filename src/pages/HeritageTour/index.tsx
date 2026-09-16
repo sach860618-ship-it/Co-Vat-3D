@@ -39,7 +39,7 @@ const HeritageTour: React.FC = () => {
 
     const handleExplore = () => {
         if (selectedDestination && isSelectedAvailable) {
-            navigate(`/heritage-tour/${selectedDestination.id}`);
+            navigate(`/demo-movement?destination=${selectedDestination.id}`);
         }
     };
 
@@ -137,6 +137,15 @@ const HeritageTour: React.FC = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Quick Link to Demo Movement */}
+            <button
+                type="button"
+                onClick={() => navigate('/demo-movement')}
+                className="fixed top-5 right-5 z-20 px-4 py-2 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-md border border-white/20 text-white text-xs font-semibold transition cursor-pointer flex items-center gap-1.5 shadow-lg"
+            >
+                <span>🎮</span> Demo Movement
+            </button>
         </div>
     );
 };

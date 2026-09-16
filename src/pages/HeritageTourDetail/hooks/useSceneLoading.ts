@@ -2,11 +2,11 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 
 export interface UseSceneLoadingOptions {
     safetyTimeoutMs?: number; // Mặc định 10s tự đóng nếu nạp quá lâu
-    finishDelayMs?: number;   // Mặc định 1s để hiển thị mốc 100%
+    finishDelayMs?: number;   // Mặc định 0ms để tắt loading ngay khi hoàn tất
 }
 
 export const useSceneLoading = (options: UseSceneLoadingOptions = {}) => {
-    const { safetyTimeoutMs = 10000, finishDelayMs = 1000 } = options;
+    const { safetyTimeoutMs = 10000, finishDelayMs = 0 } = options;
 
     const [pageLoading, setPageLoading] = useState<boolean>(true);
     const [loadingProgress, setLoadingProgress] = useState<number>(0);
@@ -47,14 +47,18 @@ export const useSceneLoading = (options: UseSceneLoadingOptions = {}) => {
         }
     }, []);
 
-    // Báo hoàn tất: lên 100% rồi delay đóng màn hình
+    // Báo hoàn tất: lên 100% rồi tắt loading ngay (hoặc delay nếu có finishDelayMs)
     const completeLoading = useCallback((completedText: string = 'Sẵn sàng!') => {
         setLoadingProgress(100);
         setLoadingItemText(completedText);
 
-        finishTimerRef.current = setTimeout(() => {
+        if (finishDelayMs > 0) {
+            finishTimerRef.current = setTimeout(() => {
+                setPageLoading(false);
+            }, finishDelayMs);
+        } else {
             setPageLoading(false);
-        }, finishDelayMs);
+        }
     }, [finishDelayMs]);
 
     // Đóng màn hình chờ ngay lập tức (dùng khi hủy hoặc lỗi nghiêm trọng)
